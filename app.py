@@ -37,7 +37,12 @@ Swagger(app, config=swagger_config)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-model = joblib.load(r'C:\Users\adel mohamedll\Desktop\Hackathon\live-demo-AI-licenses\model\license_safety_model_v1.pkl')
+import os
+from pathlib import Path
+
+# مسار الموديل صحيح سواء على جهازك أو على Railway/Render
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'model', 'license_safety_model_v1.pkl')
+model = joblib.load(MODEL_PATH)
 
 SAFE_ALTERNATIVES = {
     "GPL-3.0": "Use MIT or Apache-2.0 (More flexible, no Copyleft)",
