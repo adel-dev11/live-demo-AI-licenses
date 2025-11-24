@@ -1,1 +1,0 @@
-extract_all_licenses
