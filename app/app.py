@@ -6,9 +6,9 @@ import joblib
 import pandas as pd
 import json
 from werkzeug.utils import secure_filename
-# ====================== جديد: استخراج الـ dependencies من package.json ======================
+# ====================== New: Extract dependencies from package.json ======================
 import requests
-from tqdm import tqdm  # مش ضروري هنا بس لو حابن تستخدمه في الـ dev
+from tqdm import tqdm  # Not necessary here but useful in dev if you want
 
 
 app = Flask(__name__)
@@ -169,7 +169,7 @@ def get_npm_license(package_name, version):
     return "UNKNOWN"
 
 def extract_dependencies_from_package_json(json_data):
-    """استخراج dependencies + devDependencies مع التراخيص من npm"""
+    """Extract dependencies + devDependencies with licenses from npm"""
     deps = {}
     if "dependencies" in json_data:
         deps.update(json_data["dependencies"])
@@ -177,7 +177,7 @@ def extract_dependencies_from_package_json(json_data):
         deps.update(json_data["devDependencies"])
 
     results = []
-    print(f"جاري جلب تراخيص الـ dependencies من npm registry...")
+    print(f"Fetching licenses for dependencies from npm registry...")
     for name, version in deps.items():
         license = get_npm_license(name, version)
         results.append({
@@ -188,7 +188,7 @@ def extract_dependencies_from_package_json(json_data):
     return results
 # =========================================================================================
 
-# استبدل دالة api_predict() كلها بهذا الكود بالظبط
+# Replace the entire api_predict() function with this exact code
 @app.route("/api/predict", methods=["POST"])
 @swag_from({
     "tags": ["Model"],
@@ -210,7 +210,7 @@ def extract_dependencies_from_package_json(json_data):
     }
 })
 def api_predict():
-    # 1. التحقق من وجود الملف
+    # 1. Check if file exists
     if 'file' not in request.files:
         return jsonify({"error": "No file part in request"}), 400
 
@@ -219,20 +219,20 @@ def api_predict():
     if file.filename == '':
         return jsonify({"error": "No file selected"}), 400
 
-    # نقبل أي ملف JSON، مش لازم يكون اسمه package.json
+    # Accept any JSON file, not necessarily named package.json
     if not file.filename.lower().endswith('.json'):
-        return jsonify({"error": "Please upload a JSON file"}), 400  # تم إصلاح القوس
+        return jsonify({"error": "Please upload a JSON file"}), 400
 
-    # 2. قراءة الملف بأمان تام
+    # 2. Safely read the file
     try:
-        file.stream.seek(0)  # نرجع لأول الملف
+        file.stream.seek(0)  # Return to start of file
         json_data = json.load(file)
     except json.JSONDecodeError:
         return jsonify({"error": "Invalid JSON format in package.json"}), 400
     except Exception as e:
         return jsonify({"error": "Cannot read uploaded file", "details": str(e)}), 400
 
-    # 3. استخراج dependencies
+    # 3. Extract dependencies
     deps = {}
     if isinstance(json_data, dict):
         deps.update(json_data.get("dependencies", {}))
@@ -251,21 +251,21 @@ def api_predict():
             },
             "dependencies": [],
             "aiSummary": {
-                "narrative": "لم يتم العثور على أي dependencies أو devDependencies.",
-                "recommendedNextSteps": ["تأكد من رفع ملف package.json صحيح"]
+                "narrative": "No dependencies or devDependencies were found.",
+                "recommendedNextSteps": ["Make sure you uploaded the correct package.json file"]
             },
             "analysisLimitations": "No dependencies detected."
         }), 200
 
-    # 4. جلب التراخيص + التصنيف
+    # 4. Fetch licenses + classification
     dependencies_output = []
     high_count = 0
 
-    print(f"جاري تحليل {len(deps)} حزمة...")
+    print(f"Analyzing {len(deps)} packages...")
 
     for name, version in deps.items():
         version_clean = version.lstrip('^~><= ') if isinstance(version, str) else "unknown"
-        license = get_npm_license(name, version_clean)  # معرّفة قبل كده
+        license = get_npm_license(name, version_clean)
 
         status, confidence = predict_license(license or "UNKNOWN")
         risk_level = "low" if status == "safe" else "high"
@@ -316,17 +316,17 @@ def api_predict():
         },
         "dependencies": dependencies_output,
         "aiSummary": {
-            "narrative": f"تم تحليل {total} حزمة بنجاح. تم اكتشاف {high_count} ترخيص عالي المخاطر.",
+            "narrative": f"Successfully analyzed {total} packages. {high_count} high-risk licenses were detected.",
             "recommendedNextSteps": [
-                "استبدل الحزم الحمراء فورًا",
-                "استخدم بدائل MIT أو Apache-2.0",
-                "كرر التحليل بعد كل npm install"
+                "Replace red-flagged packages immediately",
+                "Use MIT or Apache-2.0 alternatives",
+                "Re-run analysis after every npm install"
             ] if high_count > 0 else [
-                "المشروع آمن من ناحية التراخيص",
-                "كمل كده يا بطل"
+                "Your project is safe from a licensing perspective",
+                "Keep up the great work!"
             ]
         },
-        "analysisLimitations": "التراخيص تم جلبها من npm registry. UNKNOWN licenses تم تصنيفها كـ high-risk تلقائيًا."
+        "analysisLimitations": "Licenses were fetched from the npm registry. UNKNOWN licenses are automatically classified as high-risk."
     })  
 
 @app.route("/")
