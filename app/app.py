@@ -6,6 +6,10 @@ import joblib
 import pandas as pd
 import json
 from werkzeug.utils import secure_filename
+# ====================== New: Extract dependencies from package.json ======================
+import requests
+from tqdm import tqdm  # Not necessary here but useful in dev if you want
+
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_2025'
@@ -30,7 +34,7 @@ Swagger(app, config=swagger_config)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-model = joblib.load('model/license_safety_model_v1.pkl')
+model = joblib.load(r'C:\Users\adel mohamedll\Desktop\Hackathon\live-demo-AI-licenses\model\license_safety_model_v1.pkl')
 
 SAFE_ALTERNATIVES = {
     "GPL-3.0": "Use MIT or Apache-2.0 (More flexible, no Copyleft)",
@@ -138,116 +142,192 @@ def extract_all_licenses(filepath):
 
     return list(licenses), source
 
+
+def get_npm_license(package_name, version):
+    try:
+        clean_version = version.lstrip('^~><= ')
+        url = f"https://registry.npmjs.org/{package_name}/{clean_version}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            lic = data.get("license")
+            if isinstance(lic, dict):
+                return lic.get("type", "UNKNOWN")
+            return str(lic) if lic else "UNKNOWN"
+    except:
+        pass
+    try:
+        url = f"https://registry.npmjs.org/{package_name}/latest"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            lic = resp.json().get("license")
+            if isinstance(lic, dict):
+                return lic.get("type", "UNKNOWN")
+            return str(lic) if lic else "UNKNOWN"
+    except:
+        pass
+    return "UNKNOWN"
+
+def extract_dependencies_from_package_json(json_data):
+    """Extract dependencies + devDependencies with licenses from npm"""
+    deps = {}
+    if "dependencies" in json_data:
+        deps.update(json_data["dependencies"])
+    if "devDependencies" in json_data:
+        deps.update(json_data["devDependencies"])
+
+    results = []
+    print(f"Fetching licenses for dependencies from npm registry...")
+    for name, version in deps.items():
+        license = get_npm_license(name, version)
+        results.append({
+            "name": name,
+            "version": version.lstrip('^~><='),
+            "license": license
+        })
+    return results
+# =========================================================================================
+
+# Replace the entire api_predict() function with this exact code
 @app.route("/api/predict", methods=["POST"])
 @swag_from({
     "tags": ["Model"],
-    "summary": "Analyze project license risk",
-    "description": "Accepts JSON file and returns license risk level",
-    "consumes": ["multipart/form-data", "application/json"],
+    "summary": "Analyze all dependencies in package.json",
+    "description": "Upload package.json → returns full license risk report using your trained model",
+    "consumes": ["multipart/form-data"],
     "parameters": [
         {
             "name": "file",
             "in": "formData",
             "type": "file",
-            "required": False,
-            "description": "JSON file to analyze"
+            "required": True,
+            "description": "Your project's package.json file"
         }
     ],
     "responses": {
-        200: {"description": "Analysis result"},
-        400: {"description": "Invalid input"}
+        200: {"description": "Success – Full risk report"},
+        400: {"description": "Invalid file or no dependencies"}
     }
 })
 def api_predict():
+    # 1. Check if file exists
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part in request"}), 400
 
-    if "file" not in request.files or request.files["file"].filename == "":
-        return jsonify({"error": "JSON file is required"}), 400
+    file = request.files['file']
 
-    file = request.files["file"]
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    # Accept any JSON file, not necessarily named package.json
+    if not file.filename.lower().endswith('.json'):
+        return jsonify({"error": "Please upload a JSON file"}), 400
+
+    # 2. Safely read the file
     try:
+        file.stream.seek(0)  # Return to start of file
         json_data = json.load(file)
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON format in package.json"}), 400
     except Exception as e:
-        return jsonify({"error": "Invalid JSON file", "details": str(e)}), 400
+        return jsonify({"error": "Cannot read uploaded file", "details": str(e)}), 400
 
-    try:
-        content_str = json.dumps(json_data)
-        tmp_path = "uploads/tmp_input.json"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(content_str)
+    # 3. Extract dependencies
+    deps = {}
+    if isinstance(json_data, dict):
+        deps.update(json_data.get("dependencies", {}))
+        deps.update(json_data.get("devDependencies", {}))
 
-        licenses, source = extract_all_licenses(tmp_path)
+    if not deps:
+        return jsonify({
+            "overallRiskLevel": "low",
+            "overallRiskScore": 0,
+            "summary": {
+                "totalDependencies": 0,
+                "highRisk": 0,
+                "mediumRisk": 0,
+                "lowRisk": 0,
+                "mainWarning": "No dependencies found in package.json"
+            },
+            "dependencies": [],
+            "aiSummary": {
+                "narrative": "No dependencies or devDependencies were found.",
+                "recommendedNextSteps": ["Make sure you uploaded the correct package.json file"]
+            },
+            "analysisLimitations": "No dependencies detected."
+        }), 200
 
-    except Exception as e:
-        return jsonify({"error": "JSON analysis failed", "details": str(e)}), 400
-
+    # 4. Fetch licenses + classification
     dependencies_output = []
-    risk_scores = {"low": 0, "medium": 0, "high": 0}
+    high_count = 0
 
-    for lic in licenses:
-        status, conf = predict_license(lic)
-        alt = get_safe_alternative(lic)
+    print(f"Analyzing {len(deps)} packages...")
 
+    for name, version in deps.items():
+        version_clean = version.lstrip('^~><= ') if isinstance(version, str) else "unknown"
+        license = get_npm_license(name, version_clean)
+
+        status, confidence = predict_license(license or "UNKNOWN")
         risk_level = "low" if status == "safe" else "high"
-        risk_scores[risk_level] += 1
+        if risk_level == "high":
+            high_count += 1
+
+        alt = get_safe_alternative(license or "UNKNOWN")
 
         dependencies_output.append({
-            "name": lic,
-            "version": "unknown",
-            "license": lic,
+            "name": name,
+            "version": version_clean,
+            "license": license or "UNKNOWN",
             "riskLevel": risk_level,
             "issues": [
                 {
                     "type": "license",
-                    "title": f"Issue detected in {lic}",
-                    "description": "License may affect project usage",
-                    "legalImpact": "May impose distribution restrictions" if risk_level == "high" else "None",
-                    "businessImpact": "Could affect commercial usage" if risk_level == "high" else "Minimal"
+                    "title": f"High-risk license: {license or 'UNKNOWN'}",
+                    "description": f"The license '{license or 'UNKNOWN'}' may impose strong copyleft or unclear terms.",
+                    "legalImpact": "High – may require source disclosure",
+                    "businessImpact": "Risky for commercial/closed-source projects"
                 }
-            ],
+            ] if risk_level == "high" else [],
             "impact": {
-                "legal": "High legal risk" if risk_level == "high" else "Low legal impact",
-                "business": "Could restrict usage" if risk_level == "high" else "Safe for business",
-                "technical": "No technical issues",
-                "severityScore": round(conf * 100, 2)
+                "legal": "High" if risk_level == "high" else "Low",
+                "business": "High" if risk_level == "high" else "Safe",
+                "technical": "None",
+                "severityScore": round(confidence * 100, 1)
             },
             "recommendation": {
-                "action": "Replace" if risk_level == "high" else "Keep",
-                "steps": [
-                    f"Consider using: {alt}"
-                ] if risk_level == "high" else ["No action required"]
+                "action": "Replace immediately" if risk_level == "high" else "Safe to keep",
+                "steps": [f"Recommended: {alt}"] if risk_level == "high" else ["No action required"]
             }
         })
 
-    total = len(licenses)
-    overall = "high" if risk_scores["high"] > 0 else "medium" if risk_scores["medium"] > 0 else "low"
+    total = len(deps)
+    overall = "high" if high_count > 0 else "low"
+    score = round((high_count / total) * 100, 1) if total > 0 else 0
 
-    response_body = {
+    return jsonify({
         "overallRiskLevel": overall,
-        "overallRiskScore": risk_scores["high"] * 60 + risk_scores["medium"] * 30,
-
+        "overallRiskScore": score,
         "summary": {
             "totalDependencies": total,
-            "highRisk": risk_scores["high"],
-            "mediumRisk": risk_scores["medium"],
-            "lowRisk": risk_scores["low"],
-            "mainWarning": "Some licenses may cause legal issues" if risk_scores["high"] > 0 else "No major legal concerns detected"
+            "highRisk": high_count,
+            "mediumRisk": 0,
+            "lowRisk": total - high_count,
+            "mainWarning": f"{high_count} high-risk license(s) detected" if high_count > 0 else "All licenses are safe"
         },
-
         "dependencies": dependencies_output,
-
         "aiSummary": {
-            "narrative": "License analysis completed. Each dependency was evaluated for legal risk.",
+            "narrative": f"Successfully analyzed {total} packages. {high_count} high-risk licenses were detected.",
             "recommendedNextSteps": [
-                "Replace high-risk licenses if possible",
-                "Update project documentation",
-                "Review legal requirements for commercial distribution"
+                "Replace red-flagged packages immediately",
+                "Use MIT or Apache-2.0 alternatives",
+                "Re-run analysis after every npm install"
+            ] if high_count > 0 else [
+                "Your project is safe from a licensing perspective",
+                "Keep up the great work!"
             ]
         },
-
-        "analysisLimitations": "This analysis is automated and does not replace professional legal review."
-    }
-
-    return jsonify(response_body)
+        "analysisLimitations": "Licenses were fetched from the npm registry. UNKNOWN licenses are automatically classified as high-risk."
+    })  
 
 @app.route("/")
 def home():
