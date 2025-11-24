@@ -1,0 +1,13 @@
+# .dockerignore
+runtime.txt
+.tool-versions
+.mise/
+.mise
+.config/mise/
+mise.toml
+Procfile
+__pycache__/
+*.pyc
+.env
+.git
+.gitignore
