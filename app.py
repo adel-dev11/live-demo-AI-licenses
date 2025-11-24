@@ -8,8 +8,11 @@ import json
 from werkzeug.utils import secure_filename
 # ====================== New: Extract dependencies from package.json ======================
 import requests
-from tqdm import tqdm  # Not necessary here but useful in dev if you want
-
+# from tqdm import tqdm  # Not necessary here but useful in dev if you want
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_2025'
