@@ -1,0 +1,29 @@
+[
+  {
+    "licenseId": "MIT",
+    "name": "MIT License",
+    "isOsiApproved": true,
+    "seeAlso": [
+      "https://opensource.org/licenses/MIT",
+      "http://spdx.org/licenses/MIT.html"
+    ]
+  },
+  {
+    "licenseId": "Apache-2.0",
+    "name": "Apache License 2.0",
+    "isOsiApproved": true,
+    "seeAlso": [
+      "https://www.apache.org/licenses/LICENSE-2.0.html",
+      "http://spdx.org/licenses/Apache-2.0.html"
+    ]
+  },
+  {
+    "licenseId": "GPL-3.0-only",
+    "name": "GNU General Public License v3.0 only",
+    "isOsiApproved": true,
+    "seeAlso": [
+      "https://www.gnu.org/licenses/gpl-3.0-standalone.html",
+      "http://spdx.org/licenses/GPL-3.0-only.html"
+    ]
+  }
+]
